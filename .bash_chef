@@ -1,0 +1,143 @@
+eval "$(chef shell-init bash)"
+
+### Chef aliases ####
+alias knl='knife node list'
+alias kns='knife node show $@'
+alias kne='knife node edit $@'
+
+alias kel='knife environment list'
+alias kes='knife environment show $@'
+alias kee='knife environment edit $@'
+
+alias krl='knife role list'
+alias krs='knife role show $@'
+alias kre='knife role edit $@'
+
+alias kdl='knife data bag list'
+alias kds='knife data bag show $@'
+alias kde='knife data bag edit $@'
+
+alias kcl='knife cookbook list'
+alias kcs='knife cookbook show $@'
+alias kce='knife cookbook edit $@'
+
+alias ksn='knife search node $@'
+
+#### Chef related functions ####
+function ksrc() {
+  if [ ! "$1" ] || [ ! "$2" ]; then
+    echo "knife ssh run command as root on host(s) retured via search query"
+    echo ""
+    echo "Usage: 
+          ksrc \$1 \$2 \$3
+          \$1: command to run
+          \$2: chef search query. Keyword \"all\" can be used to run command on all hosts
+          \$3: Options from knife ssh command, except -m and -x. For example: -C 5, for concurrency
+          Still honors KNIFE_SSH_HOSTS_IGNORE_LIST though"
+    echo ""
+    echo "Variables Used:
+          KNIFE_SSH_HOSTS_IGNORE_LIST: List of space separated hosts which can 
+                                       be ignored i.e. not run knife ssh on them"
+    return 0
+  fi
+  cmd="$1"
+  echo INFO:COMMAND: $cmd
+
+  if [ "$2" != "all" ]; then
+    search="$2"
+    echo SEARCH_QUERY:$search
+    KNIFE_SSH_HOSTS_LIST_TEMP=`knife search node """$search""" -i 2>/dev/null|xargs`
+  else
+    echo INFO:SEARCH_QUERY:name:*
+    KNIFE_SSH_HOSTS_LIST_TEMP=`knife search node "name:*" -i 2>/dev/null|xargs`
+  fi
+  if [ "$KNIFE_SSH_HOSTS_LIST_TEMP" == 0 ]; then
+    echo "No host returned from search query"
+    return 1
+  fi
+  
+  KNIFE_SSH_HOSTS_LIST=""
+
+  if [ "$KNIFE_SSH_HOSTS_IGNORE_LIST" ]; then
+    for aHost in $KNIFE_SSH_HOSTS_LIST_TEMP;do
+      if [[ "$KNIFE_SSH_HOSTS_IGNORE_LIST" =~ "$aHost" ]]; then
+        continue
+      else
+         KNIFE_SSH_HOSTS_LIST="$KNIFE_SSH_HOSTS_LIST $aHost"
+      fi
+    done
+  else 
+    KNIFE_SSH_HOSTS_LIST="$KNIFE_SSH_HOSTS_LIST_TEMP"
+  fi
+
+
+  echo INFO:KNIFE COMMAND: knife ssh -m \"$KNIFE_SSH_HOSTS_LIST\" -x root ${@:3} \"$cmd\"
+  knife ssh -m "$KNIFE_SSH_HOSTS_LIST" -x root ${@:3} "$cmd"
+}
+export -f ksrc 
+
+function chefenvReset() {
+  unset CHEFENV
+  unset CHEFENVDIR
+  unalias knife 2>/dev/null
+}
+
+function chefenvhelp() {
+  echo "chefenv bash function is used to set the Chef environment";
+  echo "arg1:Required: Chef environment or help. Sets CHEFENV env variable to arg1 ";
+  echo "arg2:Optional: Sets CHEFENVIR env variable to arg2";
+  echo "               By default sets CHEFENVDIR to $HOME/.chef/\${CHEFENV}"
+  echo "";
+}
+
+function chefenv() {
+  if [ -z ${1+x} ];then
+    echo "Please specify the chef env to set, chefenv <env>";
+    return 1;
+  fi
+
+  chefenvReset
+
+  if [ $1 == "help" ]; then
+    chefenvhelp;
+    return 0;
+  fi
+  export CHEFENV=$1
+  if [ $2 ] ; then
+    if [ -d $2 ]; then
+      export CHEFENVDIR=$2;
+    else
+      echo "$2 dir doesn't exist";
+      echo "Chef environment not set";
+      chefenvReset
+      return 1;
+    fi
+  else
+    if [ -d ${HOME}/.chef/${CHEFENV} ]; then
+      export CHEFENVDIR="$HOME/.chef/${CHEFENV}";
+      if [ ! -f ${CHEFENVDIR}/knife.rb ]; then
+        echo "${CHEFENVDIR}/knife.rb doesn't exists";
+        chefenvReset;
+        return 1
+      fi 
+    else
+      echo "${HOME}/.chef/${CHEFENV} dir doesn't exist";
+      echo "Chef environment not set";
+      chefenvReset
+      return 1;
+    fi
+
+  fi
+  source ~/.bash_prompt
+}
+export -f chefenv
+
+
+function knife() {
+  if [ -z "$CHEFENVDIR" ]; then
+    echo "CHEFENVDIR env variable is not set. Set using chefenv"; 
+    return 1
+  fi
+   command knife "$@" --config ${CHEFENVDIR}/knife.rb
+}
+export -f knife
